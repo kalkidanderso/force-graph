@@ -157,4 +157,35 @@
     height: 36px;
     cursor: pointer;
   }
+  .form-container .table-container {
+    width: 100%;
+    overflow-x: auto;
+  }
+  td.mat-cell,
+  th.mat-header-cell {
+    word-wrap: break-word;
+
+    @media (max-width: 600px) {
+      width: 33.33%;
+    }
+    @media (max-width: 400px) {
+      width: 50%;
+    }
+  }
+  .form-container table {
+    width: 100%;
+    overflow-x: auto; // Enable horizontal scrolling
+
+    td.mat-cell,
+    th.mat-header-cell {
+      word-wrap: break-word;
+
+      @media (max-width: 600px) {
+        width: 50%;
+      }
+      @media (max-width: 400px) {
+        width: 100%;
+      }
+    }
+  }
 }

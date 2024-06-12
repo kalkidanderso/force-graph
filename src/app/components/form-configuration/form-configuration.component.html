@@ -1,0 +1,172 @@
+<div class="legend-container">
+  <div class="leyend">
+    <div class="item-title">Measure of coincidence</div>
+    <div class="item">
+      <div class="title">Persons</div>
+      <div class="description">-</div>
+      <div class="color person"></div>
+      <div class="description">+</div>
+    </div>
+    <div class="item">
+      <div class="title">Attributes</div>
+      <div class="description">-</div>
+      <div class="color attribute"></div>
+      <div class="description">+</div>
+    </div>
+    <div class="item">
+      <div class="title">Preferences</div>
+      <div class="description">-</div>
+      <div class="color preference"></div>
+      <div class="description">+</div>
+    </div>
+  </div>
+</div>
+
+<div class="form-container">
+  <div class="title-form">Select at least 3 attributes. ({{ attributesForm.get('attributes').value.length }} selected)</div>
+  <form [formGroup]="attributesForm" (ngSubmit)="submitForm()">
+    <div class="attributes">
+      <mat-button-toggle-group formControlName="attributes" aria-label="Ingredients" multiple>
+        <mat-button-toggle [value]="attribute" *ngFor="let attribute of personQualities; let i = index">{{ attribute }}</mat-button-toggle>
+      </mat-button-toggle-group>
+    </div>
+  </form>
+
+  <div class="title-form">Enter the configuration below.</div>
+  <form [formGroup]="graphForm" (ngSubmit)="submitForm()">
+    <div class="form-row">
+      <mat-form-field appearance="outline">
+        <mat-label>N° Persons</mat-label>
+        <input matInput type="number" formControlName="nodeGroupAmount" />
+      </mat-form-field>
+
+      <mat-form-field appearance="outline">
+        <mat-label>Person Selected</mat-label>
+        <mat-select formControlName="idPersonSelected">
+          <mat-option *ngFor="let person of persons" [value]="person.id">{{ person.id }}</mat-option>
+        </mat-select>
+      </mat-form-field>
+    </div>
+    <div class="form-row">
+      <mat-form-field appearance="outline">
+        <mat-label>Persons Distance Proportion</mat-label>
+        <input matInput type="number" formControlName="personsDistanceProportion" />
+      </mat-form-field>
+      <mat-form-field appearance="outline">
+        <mat-label>Attributes Distance Proportion</mat-label>
+        <input matInput type="number" formControlName="attributesDistanceProportion" />
+      </mat-form-field>
+    </div>
+    <div class="form-row">
+      <mat-form-field appearance="outline">
+        <mat-label>Opacity of the Aura</mat-label>
+        <input matInput type="number" formControlName="opacityAura" />
+      </mat-form-field>
+      <mat-form-field appearance="outline">
+        <mat-label>Percent of defined attributes</mat-label>
+        <input matInput type="number" formControlName="percentDefinedAttributes" />
+      </mat-form-field>
+    </div>
+    <div class="form-row">
+      <mat-form-field appearance="outline">
+        <mat-label>Strength of the graph</mat-label>
+        <input matInput type="number" formControlName="strengthGraph" />
+      </mat-form-field>
+      <mat-form-field appearance="outline">
+        <mat-label>Max Aura Radio</mat-label>
+        <input matInput type="number" formControlName="maxAuraRadio" />
+      </mat-form-field>
+    </div>
+    <div class="form-row">
+      <mat-form-field appearance="outline">
+        <mat-label>Value of attribute nodes</mat-label>
+        <input matInput type="number" formControlName="valueAttributeNode" />
+      </mat-form-field>
+      <mat-form-field appearance="outline">
+        <mat-label>Full color attribute nodes</mat-label>
+        <mat-select formControlName="fullColorAttributeNodes">
+          <mat-option value="true">True</mat-option>
+          <mat-option value="false">False</mat-option>
+        </mat-select>
+      </mat-form-field>
+    </div>
+    <div class="form-row">
+      <mat-form-field appearance="outline">
+        <mat-label>Show Names</mat-label>
+        <mat-select formControlName="showNames">
+          <mat-option value="true">True</mat-option>
+          <mat-option value="false">False</mat-option>
+        </mat-select>
+      </mat-form-field>
+      <mat-form-field appearance="outline">
+        <mat-label>Stiffness of the graph</mat-label>
+        <input matInput type="number" formControlName="stiffnessGraph" />
+      </mat-form-field>
+    </div>
+    <div class="form-row">
+      <mat-form-field appearance="outline">
+        <mat-label>Cluster Affinity</mat-label>
+        <input matInput type="number" formControlName="clusterAffinity" />
+      </mat-form-field>
+    </div>
+    <div class="form-row">
+      <button mat-raised-button color="primary" type="submit">Generate Chart</button>
+    </div>
+  </form>
+
+  <div class="title-form">Persons</div>
+  <div class="table-container">
+    <table mat-table [dataSource]="dataSource" matSort>
+      <ng-container matColumnDef="id">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header>ID</th>
+        <td mat-cell *matCellDef="let element">{{ element.id }}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="name">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header>Name</th>
+        <td mat-cell *matCellDef="let element">{{ element.name }}</td>
+      </ng-container>
+
+      <ng-container *ngFor="let attribute of personQualities" [matColumnDef]="attribute">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header>{{ attribute }}</th>
+        <td mat-cell *matCellDef="let element" (click)="editCell(element, attribute)">
+          <ng-container *ngIf="isEditing(element, attribute); else displayCell">
+            <input
+              [value]="element.attributes[attribute]"
+              (blur)="saveCell(element, attribute)"
+              (input)="element.attributes[attribute] = $event.target.value"
+              (click)="stopEventPropagation($event)"
+            />
+          </ng-container>
+          <ng-template #displayCell>
+            {{ element.attributes[attribute] }}
+          </ng-template>
+        </td>
+      </ng-container>
+
+      <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+      <tr mat-row *matRowDef="let row; columns: displayedColumns"></tr>
+    </table>
+  </div>
+
+  <div class="title-form">Filter Persons</div>
+  <form [formGroup]="filterForm" (ngSubmit)="filterPersons()">
+    <div class="form-row">
+      <mat-form-field appearance="outline">
+        <mat-label>Number of Matching Attributes</mat-label>
+        <input matInput type="number" formControlName="n" />
+      </mat-form-field>
+    </div>
+    <div class="form-row">
+      <mat-form-field appearance="outline">
+        <mat-label>Selected Attributes</mat-label>
+        <mat-select formControlName="selectedAttributes" multiple>
+          <mat-option *ngFor="let attribute of personQualities" [value]="attribute">{{ attribute }}</mat-option>
+        </mat-select>
+      </mat-form-field>
+    </div>
+    <div class="form-row">
+      <button mat-raised-button color="primary" type="submit">Filter</button>
+    </div>
+  </form>
+</div>

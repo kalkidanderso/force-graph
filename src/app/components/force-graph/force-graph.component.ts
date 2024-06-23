@@ -1,57 +1,64 @@
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
-import { Link, Node, Selection, Simulation, forceCenter } from 'd3';
-import { Subject, takeUntil } from 'rxjs';
+import * as d3 from 'd3';
+import { Link, Node, Selection, Simulation } from 'd3';
+import { Subject, debounceTime, takeUntil } from 'rxjs';
 import { BreakpointService } from 'src/app/services/breakpoint.service';
 import { ChartDataService } from 'src/app/services/chart-data.service';
 
 @Component({
   selector: 'app-force-graph',
   templateUrl: './force-graph.component.html',
-  styleUrl: './force-graph.component.scss',
+  styleUrls: ['./force-graph.component.scss'],
 })
 export class ForceGraphComponent implements OnDestroy, AfterViewInit {
   @ViewChild('graphContainer') graphContainer!: ElementRef;
   private svg!: Selection<SVGSVGElement, unknown, null, undefined>;
   private simulation!: Simulation<Node, Link>;
   private componentDestroyed = new Subject<void>();
+  private initializeSubject = new Subject<void>();
 
   private chartDataService = inject(ChartDataService);
   private breakpointService = inject(BreakpointService);
 
   ngAfterViewInit(): void {
-    // Subscribing to persons2Subject to trigger graph initialization
-    this.chartDataService.persons2Subject.pipe(takeUntil(this.componentDestroyed)).subscribe((persons) => {
-      if (persons.length !== 0) {
-        this.initializeGraph();
-      }
+    this.initializeSubject.pipe(debounceTime(300), takeUntil(this.componentDestroyed)).subscribe(() => {
+      this.initializeGraph();
     });
 
-    // Subscribing to graphConfiguration to trigger graph initialization
-    this.chartDataService.graphConfiguration.pipe(takeUntil(this.componentDestroyed)).subscribe((config) => {
-      if (this.chartDataService.persons2Subject.value.length !== 0) {
-        this.initializeGraph();
-      }
+    // Subscribe to subjects to trigger graph initialization
+    this.chartDataService.persons2Subject.pipe(takeUntil(this.componentDestroyed)).subscribe(() => {
+      this.checkInitialization();
     });
 
-    // Subscribing to proportion for responsive adjustments
+    this.chartDataService.graphConfiguration.pipe(takeUntil(this.componentDestroyed)).subscribe(() => {
+      this.checkInitialization();
+    });
+
     this.breakpointService.proportion.pipe(takeUntil(this.componentDestroyed)).subscribe({
       next: () => {
-        if (this.chartDataService.persons2Subject.value.length !== 0) {
-          this.initializeGraph();
-        }
+        this.checkInitialization();
       },
       error: (err) => {
         console.error('Error in breakpoint subscription:', err);
       },
     });
+
+    // Initial trigger for graph initialization
+    this.initializeSubject.next();
   }
 
   ngOnDestroy(): void {
-    this.componentDestroyed.next(); // Signaling component destruction
-    this.componentDestroyed.unsubscribe();
+    this.componentDestroyed.next();
+    this.componentDestroyed.complete();
   }
 
-  initializeGraph() {
+  private checkInitialization(): void {
+    if (this.chartDataService.persons2Subject.value.length !== 0) {
+      this.initializeSubject.next();
+    }
+  }
+
+  private initializeGraph(): void {
     this.chartDataService
       .getChartData()
       .pipe(takeUntil(this.componentDestroyed))
@@ -65,32 +72,61 @@ export class ForceGraphComponent implements OnDestroy, AfterViewInit {
       });
   }
 
-  /**
-   * Creates the force-directed graph and initializes its state.
-   * @param data The data containing nodes and links for the graph.
-   */
-  createGraph(data: { nodes: Node[]; links: Link[] }): void {
+  private createGraph(data: { nodes: Node[]; links: Link[] }): void {
     const div: HTMLDivElement = this.graphContainer.nativeElement;
     const width: number = div.clientWidth;
     const height: number = div.clientHeight;
+
+    // Clear existing SVG content
+    d3.select(div).selectAll('svg').remove();
+
+    // Create new SVG and simulation
     const { svg, simulation } = this.chartDataService.createGraph(div, width, height, data);
+
+    // Store references
     this.svg = svg;
     this.simulation = simulation;
-    this.updateGraph();
+
+    // Update the graph with initial data
+    this.updateGraph(this.svg, this.simulation, data);
   }
 
-  /**
-   * Updates the graph's viewBox to match the container's dimensions and applies the stiffness force.
-   */
-  updateGraph(): void {
-    const div: HTMLDivElement = this.graphContainer.nativeElement;
-    const width: number = div.clientWidth;
-    const height: number = div.clientHeight;
-    this.svg.attr('viewBox', `0 0 ${width} ${height}`);
+  public updateGraph(svg: Selection<SVGSVGElement, unknown, null, undefined>, simulation: Simulation<Node, Link>, newData: { nodes: Node[]; links: Link[] }): void {
+    // Update nodes
+    let node = svg.selectAll('.node').data(newData.nodes, (d) => d.id as string);
 
-    const stiffness = this.chartDataService.graphConfiguration.value.stiffnessGraph;
-    this.simulation.force('center', forceCenter<Node>(width / 2, height / 2).strength(stiffness * 2));
-    this.simulation.restart();
+    node.exit().remove();
+
+    const nodeEnter = node.enter().append('g').attr('class', 'node');
+
+    // Add circles to nodes
+    nodeEnter
+      .append('circle')
+      .attr('r', (d) => d.value * 2)
+      .attr('fill', (d) => (d.id === 'selected' ? 'red' : 'none'));
+
+    // Add text to nodes
+    nodeEnter
+      .append('text')
+      .attr('dx', 12)
+      .attr('dy', '.35em')
+      .text((d) => d.id);
+
+    node = nodeEnter.merge(node);
+
+    // Update links
+    let link = svg.selectAll('.link').data(newData.links, (d) => `${d.source.id}-${d.target.id}`);
+
+    link.exit().remove();
+
+    const linkEnter = link.enter().append('line').attr('class', 'link');
+
+    link = linkEnter.merge(link);
+
+    // Update simulation
+    simulation.nodes(newData.nodes);
+    simulation.force('link').links(newData.links);
+    simulation.alpha(1).restart();
   }
 
   get persons() {

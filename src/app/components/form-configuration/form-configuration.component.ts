@@ -2,7 +2,6 @@ import { AfterViewInit, ChangeDetectorRef, Component, ViewChild, inject } from '
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { MatSort } from '@angular/material/sort';
 import { MatTableDataSource } from '@angular/material/table';
-import { map } from 'rxjs/operators';
 import { Person2 } from 'src/app/interfaces';
 import { PreferenceTable } from 'src/app/interfaces/preference-table.interface';
 import { ChartDataService } from 'src/app/services/chart-data.service';
@@ -169,23 +168,11 @@ export class FormConfigurationComponent implements AfterViewInit {
     return this.editingCells[person.id] && this.editingCells[person.id][attribute];
   }
 
+  // In form-configuration.component.ts
   filterPersons() {
     const n = this.filterForm.get('n').value;
     const selectedAttributes = this.filterForm.get('selectedAttributes').value;
 
-    // 1. Accessing and filtering the data from persons2Subject
-    this.chartDataService.persons2Subject
-      .pipe(
-        map((persons) => {
-          return persons.filter((person) => {
-            const matchingAttributes = Object.keys(person.attributes).filter((attribute) => selectedAttributes.includes(attribute));
-            return matchingAttributes.length >= n;
-          });
-        }),
-      )
-      .subscribe((filteredPersons) => {
-        // Updating persons2Subject with the filtered results
-        this.chartDataService.persons2Subject.next(filteredPersons);
-      });
+    this.chartDataService.applyFilter(n, selectedAttributes);
   }
 }

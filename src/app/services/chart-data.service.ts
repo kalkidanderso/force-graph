@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { BaseType, Link, Node, Selection, Simulation, drag, forceCollide, forceLink, forceManyBody, forceSimulation, select } from 'd3';
+import { BaseType, Link, Node, Selection, Simulation, drag, forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, select } from 'd3';
 import { forceCluster } from 'd3-force-cluster';
 import { BehaviorSubject, Observable, of } from 'rxjs';
 import { CHART_OPTIONS } from '../data/chart-options';
@@ -50,7 +50,7 @@ export class ChartDataService {
     /**
      * From 5 to 100,
      */
-    strengthGraph: 10,
+    strengthGraph: 30,
     /**
      * From 5 to 250,
      */
@@ -183,6 +183,25 @@ export class ChartDataService {
   }
 
   /**
+   * Filters the list of persons based on the provided criteria:
+   * Only persons with at least 'n' matching attributes from the 'selectedAttributes'
+   * array will be included in the filtered results.
+   *
+   * @param n The minimum number of matching attributes required for a person to be included.
+   * @param selectedAttributes An array of attribute names to filter by.
+   */
+
+  applyFilter(n: number, selectedAttributes: string[]) {
+    this.persons2Shown = this.persons2Created.filter((person) => {
+      const matchingAttributesCount = Object.keys(person.attributes).filter((attribute) => selectedAttributes.includes(attribute)).length;
+
+      return matchingAttributesCount >= n;
+    });
+
+    this.persons2Subject.next(this.persons2Shown);
+  }
+
+  /**
    * Generate Chart Data
    * @returns nodes and links using the persons data from the BehaviorSubject
    */
@@ -200,6 +219,7 @@ export class ChartDataService {
       name: person.name,
       attributes: {},
     };
+
     for (let a = 0; a < personsNotSelected.length; a++) {
       relationsData[personsNotSelected[a].id] = {};
     }
@@ -261,12 +281,11 @@ export class ChartDataService {
     const nodesAttributes: Node[] = [];
     let maxDistanceRelations: number = 0;
 
-    // Removing Person-to-Person links
     for (const idPerson in relationsData) {
       if (Object.prototype.hasOwnProperty.call(relationsData, idPerson)) {
         let maxDistanceAttributePerson: number = 0;
         let minDistanceAttributePerson: number = 1000;
-        // for each person
+
         for (const attribute in relationsData[idPerson]) {
           if (Object.prototype.hasOwnProperty.call(relationsData[idPerson], attribute)) {
             const distance = relationsData[idPerson][attribute] * 10 + this.maxAuraRadio / this.auraReduced;
@@ -285,10 +304,8 @@ export class ChartDataService {
           }
         }
 
-        // getting color for Attribute Node
         for (const attribute in relationsData[idPerson]) {
           if (Object.prototype.hasOwnProperty.call(relationsData[idPerson], attribute)) {
-            // for each attribute per person there'll be a node
             nodesAttributes.push({
               id: `${idPerson}_${attribute}`,
               name: attribute,
@@ -309,31 +326,29 @@ export class ChartDataService {
                 source: attribute1,
                 target: attribute2,
                 light: false,
-                distance: this.attributesDistanceProportion * this.maxAuraRadio * this.proportion, // Use fixed distance
+                distance: this.attributesDistanceProportion * this.maxAuraRadio * this.proportion,
               });
             }
-          }
-        }
-
-        // getting color for Attribute Node
-        for (const attribute in relationsData[idPerson]) {
-          if (Object.prototype.hasOwnProperty.call(relationsData[idPerson], attribute)) {
-            // for each attribute per person there'll be a node
-            nodesAttributes.push({
-              id: `${idPerson}_${attribute}`,
-              name: attribute,
-              value: this.valueAttributeNode * this.proportion,
-              color: this.US.getColorAttributeNode(relationsData[idPerson][attribute], maxDistanceAttributePerson, minDistanceAttributePerson, 1),
-              colorAura: this.US.getColorAttributeNode(relationsData[idPerson][attribute], maxDistanceAttributePerson, minDistanceAttributePerson, 1),
-              fullColor: this.fullColorAttributeNodes,
-              personId: idPerson,
-            });
           }
         }
       }
     }
 
-    // Selected person
+    // Linking the same attributes/preferences
+    for (const attribute of personQualities) {
+      const attributeNodes = nodesAttributes.filter((node) => node.name === attribute);
+      for (let i = 0; i < attributeNodes.length - 1; i++) {
+        for (let j = i + 1; j < attributeNodes.length; j++) {
+          links.push({
+            source: attributeNodes[i].id,
+            target: attributeNodes[j].id,
+            light: false,
+            distance: this.attributesDistanceProportion * this.maxAuraRadio * this.proportion,
+          });
+        }
+      }
+    }
+
     nodes.push({
       id: selectedData.id,
       name: selectedData.name,
@@ -397,9 +412,6 @@ export class ChartDataService {
       });
     }
 
-    // console.table(relationsData);
-    // console.table(selectedData.attributes);
-    // console.table(person.preferences);
     return of({ nodes, links });
   }
 
@@ -413,10 +425,29 @@ export class ChartDataService {
     height: number,
     data: { nodes: Node[]; links: Link[] },
   ): { svg: Selection<SVGSVGElement, unknown, null, undefined>; simulation: Simulation<Node, Link> } {
+    // Removing any existing SVG elements
     select('svg').remove();
+    select(div).selectAll('svg').remove();
 
+    // Creating the main SVG element
     const svg = select(div).append('svg').attr('viewBox', `0 0 ${width} ${height}`).attr('preserveAspectRatio', 'xMidYMid meet');
 
+    // Defining the marker for the "light" at the end of the link
+    svg
+      .append('defs')
+      .append('marker')
+      .attr('id', 'arrowhead')
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 18)
+      .attr('refY', 0)
+      .attr('markerWidth', 6)
+      .attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', 'white');
+
+    // Adding the link elements with highlighting and "light"
     const link: Selection<SVGLineElement, Link, BaseType, unknown> = svg
       .append('g')
       .attr('stroke', CHART_OPTIONS.linkColor)
@@ -424,8 +455,11 @@ export class ChartDataService {
       .selectAll('line')
       .data(data.links)
       .join('line')
-      .attr('class', 'links');
+      .attr('class', 'links')
+      .attr('pointer-events', 'all')
+      .attr('marker-end', 'url(#arrowhead)');
 
+    // Adding the node groups with highlighting and drag behavior
     const node: Selection<SVGGElement, Node, BaseType, unknown> = svg
       .append('g')
       .attr('class', 'nodes')
@@ -433,48 +467,28 @@ export class ChartDataService {
       .data(data.nodes)
       .enter()
       .append('g')
+      .on('mouseover', (event, d) => {
+        link.style('stroke-opacity', (l) => (l.source.id === d.id || l.target.id === d.id ? 1 : 0.1));
+        text.filter((t) => t.id === d.id || t.personId === d.id).style('fill', 'white');
+      })
+      .on('mouseout', () => {
+        link.style('stroke-opacity', 1);
+        text.filter((t) => t.type === NodeType.ATTRIBUTE).style('fill', 'transparent');
+      })
       .call(
         drag()
-          .on('start', (e, d, s) => {
+          .on('start', (e, d) => {
             this.dragStart(e, d, simulation);
-            link
-              .attr('display', 'none')
-              .filter((l) => l.source.id === d.id || l.target.id === d.id)
-              .attr('display', 'block')
-              .attr('stroke', 'white');
-
-            text
-              .filter((n) => {
-                return n.type === NodeType.ATTRIBUTE && n.personId === d.id;
-              })
-              .style('fill', 'white');
-
-            text.filter((n) => n.type === NodeType.ATTRIBUTE && n.id === d.id).style('fill', 'white');
           })
-          .on('drag', (e, d, s) => {
+          .on('drag', (e, d) => {
             this.drag(e, d, simulation);
-            link
-              .attr('display', 'none')
-              .filter((l) => l.source.id === d.id || l.target.id === d.id)
-              .attr('display', 'block')
-              .attr('stroke', 'white');
-
-            text
-              .filter((n) => {
-                return n.type === NodeType.ATTRIBUTE && n.personId === d.id;
-              })
-              .style('fill', 'white');
-
-            text.filter((n) => n.type === NodeType.ATTRIBUTE && n.id === d.id).style('fill', 'white');
           })
-          .on('end', (e, d, s) => {
+          .on('end', (e, d) => {
             this.dragEnd(e, d, simulation);
-            link.attr('display', 'block').attr('stroke', CHART_OPTIONS.linkColor);
-            text.filter((n) => n.type === NodeType.ATTRIBUTE && n.personId === d.id).style('fill', 'transparent');
-            text.filter((n) => n.type === NodeType.ATTRIBUTE && n.id === d.id).style('fill', 'transparent');
           }),
       );
 
+    // Appending circles to represent the nodes
     const circles: Selection<SVGCircleElement, Node, BaseType, unknown> = node.append('g').style('cursor', 'pointer');
 
     circles
@@ -482,6 +496,7 @@ export class ChartDataService {
       .attr('r', (d) => d.value)
       .style('fill', (d) => (d.fullColor ? d.color : 'transparent'));
 
+    // Adding gradients for visual effects
     const gradient: Selection<SVGStopElement, unknown, BaseType, unknown> = circles
       .append('radialGradient')
       .attr('id', (d, i) => (d.fullColor ? `glare-gradient-${i}` : ''))
@@ -522,6 +537,7 @@ export class ChartDataService {
       .attr('y', 0)
       .style('fill', (d, i) => `url(#gradient-out-${i})`);
 
+    // Adding text labels to the nodes
     const text = circles
       .append('text')
       .style('fill', (n) => `${n.type === NodeType.PERSON ? 'white' : 'transparent'}`)
@@ -532,25 +548,25 @@ export class ChartDataService {
 
     svg.select('#light-gradient').attr('refX', 5);
 
+    // Initializing the force simulation
     const clusterForce = forceCluster<Node>().strength(this.clusterAffinity);
-
     const simulation = forceSimulation(data.nodes)
       .force(
         'link',
         forceLink<Node, Link>(data.links)
           .id((d) => d.id)
-          .distance((d) => {
-            return d.distance * this.distanceProportion;
-          }),
+          .distance((d) => d.distance * this.distanceProportion),
       )
       .force('charge', forceManyBody<Node>().strength(-this.strengthGraph))
       .force('cluster', clusterForce)
-      .force('stiffness', forceManyBody<Node>().strength(-this.stiffnessGraph)) // Adding stiffness force
+      .force('stiffness', forceManyBody<Node>().strength(-this.stiffnessGraph))
       .force(
         'collide',
         forceCollide<Node>().radius((d) => d.value * this.clusterAffinity),
-      ) // Add forceCollide
+      )
+      .force('center', forceCenter(width / 2, height / 2))
       .on('tick', () => {
+        // Updating node and link positions on each tick of the simulation
         node.attr('transform', (n) => {
           n.x = Math.max(0, Math.min(width, n.x));
           n.y = Math.max(0, Math.min(height, n.y));
@@ -562,10 +578,8 @@ export class ChartDataService {
           .attr('x2', (l) => l.target.x)
           .attr('y2', (l) => l.target.y);
       });
-    // simulation.nodes().forEach((n) => {
-    //   n.x = width / 24; // Center nodes horizontally
-    //   n.y = height / 2; // Center nodes vertically
-    // });
+
+    // Fixing the initial positions of the nodes
     simulation.nodes().forEach((n) => {
       node.fx = n.x;
       node.fy = n.y;

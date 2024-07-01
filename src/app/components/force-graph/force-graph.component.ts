@@ -1,6 +1,6 @@
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import * as d3 from 'd3';
-import { Link, Node, Selection, Simulation } from 'd3';
+import { Link, Node, Simulation } from 'd3';
 import { Subject, debounceTime, takeUntil } from 'rxjs';
 import { BreakpointService } from 'src/app/services/breakpoint.service';
 import { ChartDataService } from 'src/app/services/chart-data.service';
@@ -12,7 +12,7 @@ import { ChartDataService } from 'src/app/services/chart-data.service';
 })
 export class ForceGraphComponent implements OnDestroy, AfterViewInit {
   @ViewChild('graphContainer') graphContainer!: ElementRef;
-  private svg!: Selection<SVGSVGElement, unknown, null, undefined>;
+  private svg!: d3.Selection<SVGSVGElement, unknown, null, undefined>;
   private simulation!: Simulation<Node, Link>;
   private componentDestroyed = new Subject<void>();
   private initializeSubject = new Subject<void>();
@@ -91,7 +91,10 @@ export class ForceGraphComponent implements OnDestroy, AfterViewInit {
     this.updateGraph(this.svg, this.simulation, data);
   }
 
-  public updateGraph(svg: Selection<SVGSVGElement, unknown, null, undefined>, simulation: Simulation<Node, Link>, newData: { nodes: Node[]; links: Link[] }): void {
+  public updateGraph(svg: d3.Selection<SVGSVGElement, unknown, null, undefined>, simulation: Simulation<Node, Link>, newData: { nodes: Node[]; links: Link[] }): void {
+    // Create indirect connections
+    const indirectConnections = this.chartDataService.createIndirectConnections();
+
     // Update nodes
     let node = svg.selectAll('.node').data(newData.nodes, (d) => d.id as string);
 
@@ -115,7 +118,7 @@ export class ForceGraphComponent implements OnDestroy, AfterViewInit {
     node = nodeEnter.merge(node);
 
     // Update links
-    let link = svg.selectAll('.link').data(newData.links, (d) => `${d.source.id}-${d.target.id}`);
+    let link = svg.selectAll('.link').data(indirectConnections, (d) => `${d.source}-${d.target}`);
 
     link.exit().remove();
 
@@ -123,9 +126,18 @@ export class ForceGraphComponent implements OnDestroy, AfterViewInit {
 
     link = linkEnter.merge(link);
 
-    // Update simulation
+    // Update simulation with custom force for resting edge length
     simulation.nodes(newData.nodes);
-    simulation.force('link').links(newData.links);
+    simulation.force(
+      'link',
+      d3.forceLink(indirectConnections).distance((d: any) =>
+        this.chartDataService.calculateRestingEdgeLength(
+          newData.nodes.find((node) => node.id === d.source),
+          newData.nodes.find((node) => node.id === d.target),
+        ),
+      ),
+    );
+
     simulation.alpha(1).restart();
   }
 

@@ -4,7 +4,7 @@ import { forceCluster } from 'd3-force-cluster';
 import { BehaviorSubject, Observable, of } from 'rxjs';
 import { CHART_OPTIONS } from '../data/chart-options';
 import { personNames, personQualities } from '../data/constants';
-import { NodeType, Sign } from '../enums';
+import { NodeType } from '../enums';
 import { GraphConfiguration, Person2 } from '../interfaces';
 import { BreakpointService } from './breakpoint.service';
 import { UtilsService } from './utils.service';
@@ -63,7 +63,7 @@ export class ChartDataService {
     showNames: true,
 
     stiffnessGraph: 1,
-    clusterAffinity: 0.5, // Default cluster affinity
+    clusterAffinity: 0.5,
   });
 
   get idPersonSelected() {
@@ -201,6 +201,41 @@ export class ChartDataService {
     this.persons2Subject.next(this.persons2Shown);
   }
 
+  // Implementing indirect connections
+  createIndirectConnections() {
+    const connections = [];
+    const persons = this.persons2Subject.value;
+    persons.forEach((person) => {
+      Object.keys(person.attributes).forEach((attribute) => {
+        const connectedPeople = persons.filter((p) => Object.keys(p.attributes).includes(attribute));
+        connectedPeople.forEach((connectedPerson) => {
+          if (person.id !== connectedPerson.id) {
+            connections.push({
+              source: person.id,
+              target: connectedPerson.id,
+              attribute: attribute,
+            });
+          }
+        });
+      });
+    });
+    return connections;
+  }
+
+  // Implementing resting edge length calculation
+  calculateRestingEdgeLength(personA: Person2, personB: Person2): number {
+    let similarityScore = 0;
+    let sharedAttributes = 0;
+    Object.keys(personA.attributes).forEach((attribute) => {
+      if (personB.attributes[attribute] !== undefined) {
+        const diff = Math.abs(personA.attributes[attribute] - personB.attributes[attribute]);
+        similarityScore += (10 - diff) / 10;
+        sharedAttributes++;
+      }
+    });
+    return (1 - similarityScore / (sharedAttributes || 1)) * this.maxAuraRadio * this.proportion;
+  }
+
   /**
    * Generate Chart Data
    * @returns nodes and links using the persons data from the BehaviorSubject
@@ -210,148 +245,14 @@ export class ChartDataService {
     const nodes: Node[] = [];
     const links: Link[] = [];
 
-    const person = this.persons2Shown.find((p) => p.id === this.idPersonSelected);
-    const personsNotSelected = this.persons2Shown.filter((p) => p.id !== this.idPersonSelected);
+    // Get the selected person and other persons
+    const selectedPerson = this.persons2Shown.find((p) => p.id === this.idPersonSelected);
+    const otherPersons = this.persons2Shown.filter((p) => p.id !== this.idPersonSelected);
 
-    const relationsData = {};
-    const selectedData = {
-      id: person.id,
-      name: person.name,
-      attributes: {},
-    };
-
-    for (let a = 0; a < personsNotSelected.length; a++) {
-      relationsData[personsNotSelected[a].id] = {};
-    }
-
-    for (let i = 0; i < personsNotSelected.length; i++) {
-      for (const attribute of personQualities) {
-        if (personsNotSelected[i].attributes[attribute]) {
-          const sign: Sign = person.preferences[attribute].sign;
-
-          let attraction: number = 0;
-
-          const preferenceValue: number = person.preferences[attribute].value;
-          const attributevalue: number = personsNotSelected[i].attributes[attribute];
-
-          const isGreater: boolean = preferenceValue < attributevalue;
-          const isLesser: boolean = preferenceValue > attributevalue;
-          const isExact: boolean = preferenceValue === attributevalue;
-
-          if (sign === Sign.GREATER && isGreater) {
-            attraction = person.preferences[attribute].weight;
-            relationsData[personsNotSelected[i].id][attribute] = attraction;
-          } else if (sign === Sign.LESSER && isLesser) {
-            attraction = person.preferences[attribute].weight;
-            relationsData[personsNotSelected[i].id][attribute] = attraction;
-          } else if (sign === Sign.EXACT && isExact) {
-            attraction = person.preferences[attribute].weight;
-            relationsData[personsNotSelected[i].id][attribute] = attraction;
-          } else {
-            relationsData[personsNotSelected[i].id][attribute] = 0;
-          }
-
-          if (sign === Sign.CLOSER) {
-            const separationUnt: number = person.preferences[attribute].weight / (this.rangeAttributes - 1);
-
-            const distanceInt: number = preferenceValue - attributevalue;
-
-            const distanceDouble: number = Math.abs(distanceInt) * separationUnt;
-
-            attraction = Math.floor((person.preferences[attribute].weight - distanceDouble) * 100) / 100;
-
-            relationsData[personsNotSelected[i].id][attribute] = attraction;
-          }
-
-          if (selectedData.attributes[attribute]) {
-            selectedData.attributes[attribute] += attraction;
-          } else {
-            selectedData.attributes[attribute] = attraction;
-          }
-        } else {
-          relationsData[personsNotSelected[i].id][attribute] = 0;
-          if (!selectedData.attributes[attribute]) {
-            selectedData.attributes[attribute] = 0;
-          }
-        }
-      }
-    }
-
-    const linksRelationsAttributes: Link[] = [];
-    const nodesAttributes: Node[] = [];
-    let maxDistanceRelations: number = 0;
-
-    for (const idPerson in relationsData) {
-      if (Object.prototype.hasOwnProperty.call(relationsData, idPerson)) {
-        let maxDistanceAttributePerson: number = 0;
-        let minDistanceAttributePerson: number = 1000;
-
-        for (const attribute in relationsData[idPerson]) {
-          if (Object.prototype.hasOwnProperty.call(relationsData[idPerson], attribute)) {
-            const distance = relationsData[idPerson][attribute] * 10 + this.maxAuraRadio / this.auraReduced;
-
-            linksRelationsAttributes.push({
-              source: idPerson,
-              target: `${idPerson}_${attribute}`,
-              light: false,
-              distance: distance,
-            });
-
-            if (distance > maxDistanceRelations) maxDistanceRelations = distance;
-
-            if (relationsData[idPerson][attribute] > maxDistanceAttributePerson) maxDistanceAttributePerson = relationsData[idPerson][attribute];
-            if (relationsData[idPerson][attribute] < minDistanceAttributePerson) minDistanceAttributePerson = relationsData[idPerson][attribute];
-          }
-        }
-
-        for (const attribute in relationsData[idPerson]) {
-          if (Object.prototype.hasOwnProperty.call(relationsData[idPerson], attribute)) {
-            nodesAttributes.push({
-              id: `${idPerson}_${attribute}`,
-              name: attribute,
-              value: this.valueAttributeNode * this.proportion,
-              color: this.US.getColorAttributeNode(relationsData[idPerson][attribute], maxDistanceAttributePerson, minDistanceAttributePerson, 1),
-              colorAura: this.US.getColorAttributeNode(relationsData[idPerson][attribute], maxDistanceAttributePerson, minDistanceAttributePerson, 1),
-              fullColor: this.fullColorAttributeNodes,
-              personId: idPerson,
-            });
-          }
-        }
-
-        // Adding links between similar attributes/preferences
-        for (const attribute1 of personQualities) {
-          for (const attribute2 of personQualities) {
-            if (attribute1 !== attribute2) {
-              links.push({
-                source: attribute1,
-                target: attribute2,
-                light: false,
-                distance: this.attributesDistanceProportion * this.maxAuraRadio * this.proportion,
-              });
-            }
-          }
-        }
-      }
-    }
-
-    // Linking the same attributes/preferences
-    for (const attribute of personQualities) {
-      const attributeNodes = nodesAttributes.filter((node) => node.name === attribute);
-      for (let i = 0; i < attributeNodes.length - 1; i++) {
-        for (let j = i + 1; j < attributeNodes.length; j++) {
-          links.push({
-            source: attributeNodes[i].id,
-            target: attributeNodes[j].id,
-            light: false,
-            distance: this.attributesDistanceProportion * this.maxAuraRadio * this.proportion,
-          });
-        }
-      }
-    }
-
+    // Adding the selected person node
     nodes.push({
-      id: selectedData.id,
-      name: selectedData.name,
+      id: selectedPerson.id.toString(),
+      name: this.showNames ? selectedPerson.name : '',
       color: `rgb(255, 0, 166, ${this.opacityAura})`,
       fullColor: false,
       colorAura: `rgb(255, 0, 166, ${this.opacityAura})`,
@@ -360,59 +261,102 @@ export class ChartDataService {
       type: NodeType.PERSON,
     });
 
-    const linksSelectedAttributes: Link[] = [];
-    let maxDistanceSelected: number = 0;
-    let minDistanceSelected: number = 1000;
-
-    for (const key in selectedData.attributes) {
-      if (Object.prototype.hasOwnProperty.call(selectedData.attributes, key)) {
-        const distance = selectedData.attributes[key] * 10 + this.maxAuraRadio / this.auraReduced;
-
-        linksSelectedAttributes.push({
-          source: key,
-          target: selectedData.id,
-          light: false,
-          distance: distance,
-        });
-
-        if (distance > maxDistanceSelected) maxDistanceSelected = distance;
-        if (distance < minDistanceSelected) minDistanceSelected = distance;
-      }
-    }
-
-    for (let i = 0; i < linksSelectedAttributes.length; i++) {
-      links.push({
-        ...linksSelectedAttributes[i],
-        distance: ((linksSelectedAttributes[i].distance * this.maxAuraRadio * this.attributesDistanceProportion) / maxDistanceSelected) * this.proportion,
-      });
-    }
-
-    for (const key in selectedData.attributes) {
-      if (Object.prototype.hasOwnProperty.call(selectedData.attributes, key)) {
-        const distance = selectedData.attributes[key] * 10 + this.maxAuraRadio / this.auraReduced;
-
-        nodes.push({
-          id: key,
-          name: key,
+    // Processing selected person's attributes
+    for (const attribute in selectedPerson.attributes) {
+      if (selectedPerson.attributes.hasOwnProperty(attribute)) {
+        const attributeValue = selectedPerson.attributes[attribute];
+        const attributeNode: Node = {
+          id: `${selectedPerson.id}_${attribute}`,
+          name: this.showNames ? attribute : '',
           value: this.valueAttributeNode * this.proportion,
-          color: this.US.getColorAttributeNode(distance, maxDistanceSelected, minDistanceSelected, 1, true),
-          colorAura: this.US.getColorAttributeNode(distance, maxDistanceSelected, minDistanceSelected, 1, true),
+          color: this.getAttributeColor(attributeValue, this.rangeAttributes),
+          colorAura: this.getAttributeColor(attributeValue, this.rangeAttributes),
           fullColor: this.fullColorAttributeNodes,
-          personId: selectedData.id,
+          personId: selectedPerson.id,
           type: NodeType.ATTRIBUTE,
+        };
+        nodes.push(attributeNode);
+
+        // Link between selected person and attribute
+        links.push({
+          source: selectedPerson.id.toString(),
+          target: attributeNode.id,
+          light: false,
+          distance: this.calculateAttributeDistance(attributeValue),
         });
       }
     }
 
-    // nodes others attributes
-    for (let i = 0; i < nodesAttributes.length; i++) {
+    // Processing other persons
+    for (const person of otherPersons) {
+      // Add person node
       nodes.push({
-        ...nodesAttributes[i],
-        type: NodeType.ATTRIBUTE,
+        id: person.id.toString(),
+        name: this.showNames ? person.name : '',
+        color: 'rgb(100, 100, 100)',
+        fullColor: false,
+        colorAura: 'rgb(100, 100, 100)',
+        value: (this.maxAuraRadio / 2) * this.proportion,
+        personId: undefined,
+        type: NodeType.PERSON,
       });
+
+      // Processing person's attributes
+      for (const attribute in person.attributes) {
+        if (person.attributes.hasOwnProperty(attribute)) {
+          const attributeValue = person.attributes[attribute];
+          const attributeNode: Node = {
+            id: `${person.id}_${attribute}`,
+            name: this.showNames ? attribute : '',
+            value: this.valueAttributeNode * this.proportion,
+            color: this.getAttributeColor(attributeValue, this.rangeAttributes),
+            colorAura: this.getAttributeColor(attributeValue, this.rangeAttributes),
+            fullColor: this.fullColorAttributeNodes,
+            personId: person.id,
+            type: NodeType.ATTRIBUTE,
+          };
+          nodes.push(attributeNode);
+
+          // Link between person and attribute
+          links.push({
+            source: person.id.toString(),
+            target: attributeNode.id,
+            light: false,
+            distance: this.calculateAttributeDistance(attributeValue),
+          });
+        }
+      }
+    }
+
+    // Creating links between similar attributes
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const node1 = nodes[i];
+        const node2 = nodes[j];
+        if (node1.type === NodeType.ATTRIBUTE && node2.type === NodeType.ATTRIBUTE && node1.name === node2.name) {
+          links.push({
+            source: node1.id,
+            target: node2.id,
+            light: false,
+            distance: this.attributesDistanceProportion * this.maxAuraRadio * this.proportion,
+          });
+        }
+      }
     }
 
     return of({ nodes, links });
+  }
+
+  private calculateAttributeDistance(attributeValue: number): number {
+    // Calculating distance based on attribute value
+    const normalizedValue = attributeValue / this.rangeAttributes;
+    return normalizedValue * this.maxAuraRadio * this.proportion;
+  }
+
+  private getAttributeColor(value: number, maxValue: number): string {
+    // Generating a color based on the attribute value
+    const hue = (value / maxValue) * 120; // 0 to 120 degrees (red to green)
+    return `hsl(${hue}, 100%, 50%)`;
   }
 
   /**
@@ -555,16 +499,25 @@ export class ChartDataService {
         'link',
         forceLink<Node, Link>(data.links)
           .id((d) => d.id)
-          .distance((d) => d.distance * this.distanceProportion),
+          .distance((d) => d.distance)
+          .strength(1),
       )
-      .force('charge', forceManyBody<Node>().strength(-this.strengthGraph))
-      .force('cluster', clusterForce)
-      .force('stiffness', forceManyBody<Node>().strength(-this.stiffnessGraph))
+      .force('charge', forceManyBody<Node>().strength(-this.strengthGraph * 1.5))
+      .force(
+        'link',
+        forceLink<Node, Link>(data.links)
+          .id((d) => d.id)
+          .distance((d) => d.distance)
+          .strength((d) => (d.light ? 0.1 : 1)), // Weaker strength for indirect connections
+      )
+      .force('cluster', clusterForce.strength(this.clusterAffinity * 1.2))
+      .force('stiffness', forceManyBody<Node>().strength(-this.stiffnessGraph * 0.8))
       .force(
         'collide',
         forceCollide<Node>().radius((d) => d.value * this.clusterAffinity),
       )
       .force('center', forceCenter(width / 2, height / 2))
+      .force('attribute', this.createAttributeForce(data.nodes, data.links))
       .on('tick', () => {
         // Updating node and link positions on each tick of the simulation
         node.attr('transform', (n) => {
@@ -588,6 +541,31 @@ export class ChartDataService {
     return { svg, simulation };
   }
 
+  private createAttributeForce(nodes: Node[], links: Link[]): (alpha: number) => void {
+    return (alpha: number) => {
+      for (const node of nodes) {
+        if (node.type === NodeType.PERSON) {
+          let fx = 0,
+            fy = 0,
+            count = 0;
+          for (const link of links) {
+            if (link.source === node || link.target === node) {
+              const other = link.source === node ? link.target : link.source;
+              if (other.type === NodeType.ATTRIBUTE) {
+                fx += other.x;
+                fy += other.y;
+                count++;
+              }
+            }
+          }
+          if (count > 0) {
+            node.vx += (fx / count - node.x) * alpha * 0.1;
+            node.vy += (fy / count - node.y) * alpha * 0.1;
+          }
+        }
+      }
+    };
+  }
   private dragStart(e: DragEvent, d: Node, simulation) {
     simulation.alphaTarget(0.05).restart();
     d.fx = d.x;

@@ -9,6 +9,8 @@ import { GraphConfiguration, Person2 } from '../interfaces';
 import { BreakpointService } from './breakpoint.service';
 import { UtilsService } from './utils.service';
 
+import type { D3DragEvent } from 'd3-drag';
+
 @Injectable({
   providedIn: 'root',
 })
@@ -202,40 +204,53 @@ export class ChartDataService {
   }
 
   // Implementing indirect connections
-  createIndirectConnections() {
-    const connections = [];
-    const persons = this.persons2Subject.value;
-    persons.forEach((person) => {
-      Object.keys(person.attributes).forEach((attribute) => {
-        const connectedPeople = persons.filter((p) => Object.keys(p.attributes).includes(attribute));
-        connectedPeople.forEach((connectedPerson) => {
-          if (person.id !== connectedPerson.id) {
-            connections.push({
-              source: person.id,
-              target: connectedPerson.id,
-              attribute: attribute,
-            });
-          }
+ createIndirectConnections() {
+  const connections = [];
+  const persons = this.persons2Subject.value;
+  const attributes = this.attributesSelected.value;
+
+  attributes.forEach(attribute => {
+    const personsWithAttribute = persons.filter(p => p.attributes.hasOwnProperty(attribute));
+    for (let i = 0; i < personsWithAttribute.length; i++) {
+      for (let j = i + 1; j < personsWithAttribute.length; j++) {
+        connections.push({
+          source: personsWithAttribute[i].id,
+          target: personsWithAttribute[j].id,
+          attribute: attribute
         });
-      });
-    });
-    return connections;
-  }
+      }
+    }
+  });
+
+  return connections;
+}
+
 
   // Implementing resting edge length calculation
-  calculateRestingEdgeLength(personA: Person2, personB: Person2): number {
-    let similarityScore = 0;
-    let sharedAttributes = 0;
-    Object.keys(personA.attributes).forEach((attribute) => {
-      if (personB.attributes[attribute] !== undefined) {
-        const diff = Math.abs(personA.attributes[attribute] - personB.attributes[attribute]);
-        similarityScore += (10 - diff) / 10;
-        sharedAttributes++;
+  calculateRestingEdgeLength(sourceNode: Node, targetNode: Node): number {
+    if (sourceNode.type === NodeType.PERSON && targetNode.type === NodeType.PERSON) {
+      const sourcePerson = this.persons2Shown.find(p => p.id.toString() === sourceNode.id);
+      const targetPerson = this.persons2Shown.find(p => p.id.toString() === targetNode.id);
+  
+      if (sourcePerson && targetPerson) {
+        let similarityScore = 0;
+        let sharedAttributes = 0;
+  
+        Object.keys(sourcePerson.attributes).forEach(attribute => {
+          if (targetPerson.attributes.hasOwnProperty(attribute)) {
+            const diff = Math.abs(sourcePerson.attributes[attribute] - targetPerson.attributes[attribute]);
+            similarityScore += (this.rangeAttributes - diff) / this.rangeAttributes;
+            sharedAttributes++;
+          }
+        });
+  
+        const avgSimilarity = sharedAttributes > 0 ? similarityScore / sharedAttributes : 0;
+        return (1 - avgSimilarity) * this.maxAuraRadio * this.proportion;
       }
-    });
-    return (1 - similarityScore / (sharedAttributes || 1)) * this.maxAuraRadio * this.proportion;
+    }
+  
+    return this.attributesDistanceProportion * this.maxAuraRadio * this.proportion;
   }
-
   /**
    * Generate Chart Data
    * @returns nodes and links using the persons data from the BehaviorSubject
@@ -289,7 +304,7 @@ export class ChartDataService {
 
     // Processing other persons
     for (const person of otherPersons) {
-      // Add person node
+      // Adding person node
       nodes.push({
         id: person.id.toString(),
         name: this.showNames ? person.name : '',
@@ -328,21 +343,22 @@ export class ChartDataService {
       }
     }
 
-    // Creating links between similar attributes
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const node1 = nodes[i];
-        const node2 = nodes[j];
-        if (node1.type === NodeType.ATTRIBUTE && node2.type === NodeType.ATTRIBUTE && node1.name === node2.name) {
-          links.push({
-            source: node1.id,
-            target: node2.id,
-            light: false,
-            distance: this.attributesDistanceProportion * this.maxAuraRadio * this.proportion,
-          });
-        }
+  // Creating links between similar attributes across persons
+  const attributeNodes = nodes.filter(n => n.type === NodeType.ATTRIBUTE);
+  for (let i = 0; i < attributeNodes.length; i++) {
+    for (let j = i + 1; j < attributeNodes.length; j++) {
+      const node1 = attributeNodes[i];
+      const node2 = attributeNodes[j];
+      if (node1.name === node2.name && node1.personId !== node2.personId) {
+        links.push({
+          source: node1.id,
+          target: node2.id,
+          light: false,
+          distance: this.attributesDistanceProportion * this.maxAuraRadio * this.proportion,
+        });
       }
     }
+  }
 
     return of({ nodes, links });
   }
@@ -420,7 +436,7 @@ export class ChartDataService {
         text.filter((t) => t.type === NodeType.ATTRIBUTE).style('fill', 'transparent');
       })
       .call(
-        drag()
+       drag<SVGGElement, Node>()
           .on('start', (e, d) => {
             this.dragStart(e, d, simulation);
           })
@@ -495,26 +511,22 @@ export class ChartDataService {
     // Initializing the force simulation
     const clusterForce = forceCluster<Node>().strength(this.clusterAffinity);
     const simulation = forceSimulation(data.nodes)
+    .alphaDecay(0.02) 
+    .alphaMin(0.001) 
       .force(
         'link',
         forceLink<Node, Link>(data.links)
           .id((d) => d.id)
-          .distance((d) => d.distance)
+          .distance((d) => this.calculateRestingEdgeLength(d.source, d.target))
           .strength(1),
       )
-      .force('charge', forceManyBody<Node>().strength(-this.strengthGraph * 1.5))
-      .force(
-        'link',
-        forceLink<Node, Link>(data.links)
-          .id((d) => d.id)
-          .distance((d) => d.distance)
-          .strength((d) => (d.light ? 0.1 : 1)), // Weaker strength for indirect connections
-      )
-      .force('cluster', clusterForce.strength(this.clusterAffinity * 1.2))
-      .force('stiffness', forceManyBody<Node>().strength(-this.stiffnessGraph * 0.8))
+      .force('charge', forceManyBody<Node>().strength(-this.strengthGraph ))
+
+      .force('cluster', clusterForce.strength(this.clusterAffinity))
+      .force('stiffness', forceManyBody<Node>().strength(-this.stiffnessGraph * 0.5))
       .force(
         'collide',
-        forceCollide<Node>().radius((d) => d.value * this.clusterAffinity),
+        forceCollide<Node>().radius((d) => d.value * this.clusterAffinity * 1.2),
       )
       .force('center', forceCenter(width / 2, height / 2))
       .force('attribute', this.createAttributeForce(data.nodes, data.links))
@@ -530,7 +542,11 @@ export class ChartDataService {
           .attr('y1', (l) => l.source.y)
           .attr('x2', (l) => l.target.x)
           .attr('y2', (l) => l.target.y);
-      });
+
+          this.coolDown(simulation)();
+      })
+      
+      ;
 
     // Fixing the initial positions of the nodes
     simulation.nodes().forEach((n) => {
@@ -541,6 +557,16 @@ export class ChartDataService {
     return { svg, simulation };
   }
 
+
+  private coolDown(simulation: Simulation<Node, Link>) {
+    return () => {
+      if (simulation.alpha() > 0.01) {
+        simulation.alpha(simulation.alpha() * 0.99);
+      } else {
+        simulation.stop();
+      }
+    };
+  }
   private createAttributeForce(nodes: Node[], links: Link[]): (alpha: number) => void {
     return (alpha: number) => {
       for (const node of nodes) {
@@ -566,22 +592,27 @@ export class ChartDataService {
       }
     };
   }
-  private dragStart(e: DragEvent, d: Node, simulation) {
-    simulation.alphaTarget(0.05).restart();
+  
+  
+  private dragStart(event: D3DragEvent<SVGGElement, Node, Node>, d: Node, simulation: Simulation<Node, Link>) {
+    if (!event.active) simulation.alphaTarget(0.3).restart();
     d.fx = d.x;
     d.fy = d.y;
   }
-
-  private drag(e: DragEvent, d: Node, simulation) {
-    d.fx = e.x;
-    d.fy = e.y;
+  
+  private drag(event: D3DragEvent<SVGGElement, Node, Node>, d: Node, simulation: Simulation<Node, Link>) {
+    d.fx = event.x;
+    d.fy = event.y;
+    simulation.alpha(0.5).restart(); // Recalculating positions
   }
-
-  private dragEnd(e: DragEvent, d: Node, simulation) {
-    simulation.alphaTarget(0);
+  
+  private dragEnd(event: D3DragEvent<SVGGElement, Node, Node>, d: Node, simulation: Simulation<Node, Link>) {
+    if (!event.active) simulation.alphaTarget(0);
     d.fx = null;
     d.fy = null;
+    simulation.alpha(0.3).restart(); // Allow settling into new positions
   }
+
 
   getNodeRadiusValue(counter: number) {
     return counter * 5 + 5;
